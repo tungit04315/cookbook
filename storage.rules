@@ -1,0 +1,13 @@
+rules_version = '2';
+
+// Không có Authentication -> chỉ giới hạn theo dung lượng & loại file.
+// Xem cảnh báo bảo mật tương tự trong firestore.rules.
+service firebase.storage {
+  match /b/{bucket}/o {
+    match /recipe-images/{allPaths=**} {
+      allow read, write: if request.resource == null
+                          || (request.resource.size < 5 * 1024 * 1024
+                              && request.resource.contentType.matches('image/.*'));
+    }
+  }
+}
