@@ -12,9 +12,6 @@ const State = {
   filters: { query: '', categoryId: '', difficulty: '', favoriteOnly: false, sort: 'newest', maxTime: '' },
   images: {},
   checkedIngredients: new Set(),
-  formImageDataUrl: null,
-  formImagePreview: null,
-  formImageChanged: false,
   unsubscribers: []
 };
 
@@ -56,39 +53,11 @@ function resolveImageSrc(r) {
   return SAMPLE_IMAGES.pasta;
 }
 
-/* --------- Nén ảnh phía client trước khi lưu vào Firestore (bảng recipe_images) --------- */
-function compressImageFile(file, maxDim = 900, quality = 0.72) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = () => reject(new Error('Không đọc được file ảnh'));
-    reader.onload = () => {
-      const img = new Image();
-      img.onerror = () => reject(new Error('File không phải ảnh hợp lệ'));
-      img.onload = () => {
-        let { width, height } = img;
-        if (width > maxDim || height > maxDim) {
-          if (width >= height) { height = Math.round(height * (maxDim / width)); width = maxDim; }
-          else { width = Math.round(width * (maxDim / height)); height = maxDim; }
-        }
-        const canvas = document.createElement('canvas');
-        canvas.width = width; canvas.height = height;
-        canvas.getContext('2d').drawImage(img, 0, 0, width, height);
-        let q = quality;
-        let dataUrl = canvas.toDataURL('image/jpeg', q);
-        // Firestore giới hạn 1 document ~1MB -> giảm chất lượng dần nếu ảnh còn quá nặng
-        while (dataUrl.length > 700000 && q > 0.3) {
-          q -= 0.12;
-          dataUrl = canvas.toDataURL('image/jpeg', q);
-        }
-        if (dataUrl.length > 900000) { reject(new Error('Ảnh vẫn quá nặng sau khi nén, vui lòng chọn ảnh khác nhỏ hơn.')); return; }
-        resolve(dataUrl);
-      };
-      img.src = reader.result;
-    };
-    reader.readAsDataURL(file);
-  });
+/* --------- Link ảnh --------- */
+function isImageLink(url) {
+  try { return ['http:', 'https:'].includes(new URL(url).protocol); }
+  catch (e) { return false; }
 }
-
 
 function categoryById(id) { return State.categories.find(c => c.id === id); }
 function recipeById(id) { return State.recipes.find(r => r.id === id); }
@@ -623,9 +592,8 @@ function renderRecipeForm(id) {
     } else {
       State.formState = blankFormState();
     }
-    State.formImageDataUrl = null;
-    State.formImagePreview = null;
-    State.formImageChanged = false;
+    // Ảnh đã tải lên trước đây (imageId) được giữ nguyên; ô link để trống cho tới khi dán link mới
+    if (State.formState.imageId) State.formState.imageUrl = '';
   }
   const f = State.formState;
   renderHeaderPage(editing ? 'Sửa công thức' : 'Thêm công thức mới', editing ? 'recipe/' + id : 'dashboard');
@@ -633,11 +601,9 @@ function renderRecipeForm(id) {
   byId('mainContent').innerHTML = `
     <div class="form-wrap">
       <div class="form-group">
-        <label>Ảnh món ăn</label>
-        <div class="image-upload" data-action="pick-image">
-          ${(State.formImagePreview || (f.imageId && State.images[f.imageId]) || f.imageUrl) ? `<img src="${esc(State.formImagePreview || State.images[f.imageId] || f.imageUrl)}">` : '<span>📷</span><span>Chọn ảnh món ăn</span>'}
-        </div>
-        <input type="file" id="imageInput" accept="image/*" class="hidden">
+        <label>Link ảnh món ăn</label>
+        <div class="image-preview" id="imagePreview"></div>
+        <input type="url" id="fImageUrl" value="${esc(f.imageUrl)}" placeholder="${f.imageId ? 'Đang dùng ảnh đã lưu. Dán link để thay' : 'https://.../anh-mon-an.jpg'}">
       </div>
 
       <div class="form-group"><label>Tên món *</label><input type="text" id="fName" value="${esc(f.name)}" placeholder="Ví dụ: Phở Bò Hà Nội"></div>
@@ -693,7 +659,8 @@ function renderRecipeForm(id) {
   byId('fTips').addEventListener('input', e => f.tips = e.target.value);
   byId('fNotes').addEventListener('input', e => f.notes = e.target.value);
   byId('fVideo').addEventListener('input', e => f.videoLink = e.target.value);
-  byId('imageInput').addEventListener('change', onImagePicked);
+  byId('fImageUrl').addEventListener('input', e => { f.imageUrl = e.target.value.trim(); updateImagePreview(); });
+  updateImagePreview();
   bindIngredientStepInputs();
 }
 function ingredientRowHtml(ing, i) {
@@ -734,44 +701,32 @@ function refreshDynamicLists() {
   bindIngredientStepInputs();
 }
 function setDifficulty(d) { State.formState.difficulty = d; qsa('.difficulty-opt').forEach(el2 => el2.classList.toggle('active', el2.dataset.id === d)); }
-function pickImage() { byId('imageInput').click(); }
-async function onImagePicked(e) {
-  const file = e.target.files[0];
-  if (!file) return;
-  try {
-    qs('.image-upload').innerHTML = '<span>⏳</span><span>Đang xử lý ảnh...</span>';
-    const dataUrl = await compressImageFile(file);
-    State.formImageDataUrl = dataUrl;
-    State.formImagePreview = dataUrl;
-    State.formImageChanged = true;
-    qs('.image-upload').innerHTML = `<img src="${dataUrl}">`;
-  } catch (err) {
-    toast('Lỗi ảnh: ' + err.message);
-    qs('.image-upload').innerHTML = '<span>📷</span><span>Chọn ảnh món ăn</span>';
-  }
+function updateImagePreview() {
+  const f = State.formState;
+  const box = byId('imagePreview');
+  const showMessage = msg => { box.textContent = msg; };
+  if (f.imageUrl && !isImageLink(f.imageUrl)) return showMessage('Link phải bắt đầu bằng http:// hoặc https://');
+  const src = f.imageUrl || State.images[f.imageId];
+  if (!src) return showMessage('🖼️ Dán link để xem trước ảnh');
+  const img = document.createElement('img');
+  img.alt = 'Xem trước ảnh món ăn';
+  img.onerror = () => showMessage('⚠️ Không tải được ảnh. Hãy dùng link trỏ thẳng tới file ảnh.');
+  img.src = src;
+  box.replaceChildren(img);
 }
 
 async function saveRecipe(status) {
   const f = State.formState;
   if (!f.name || !f.name.trim()) { toast('Vui lòng nhập tên món ăn'); return; }
+  const imageUrl = (f.imageUrl || '').trim();
+  if (imageUrl && !isImageLink(imageUrl)) { toast('Link ảnh không hợp lệ'); return; }
   try {
     showLoading();
-    let imageId = f.imageId || '';
+    // Có link mới thì bỏ ảnh base64 cũ; để trống thì giữ nguyên ảnh cũ
     const oldImageId = f.imageId || '';
-    if (State.formImageChanged && State.formImageDataUrl) {
-      // Lưu ảnh đã nén vào "bảng" recipe_images riêng, recipe chỉ giữ imageId trỏ tới
-      const imgRef = await db.collection('recipe_images').add({
-        data: State.formImageDataUrl,
-        createdAt: firebase.firestore.FieldValue.serverTimestamp()
-      });
-      imageId = imgRef.id;
-      // Xoá ảnh cũ (nếu có) để không tồn kho ảnh rác
-      if (oldImageId && oldImageId !== imageId) {
-        db.collection('recipe_images').doc(oldImageId).delete().catch(() => { });
-      }
-    }
+    const imageId = imageUrl ? '' : oldImageId;
     const payload = {
-      name: f.name.trim(), imageId, imageUrl: f.imageUrl || '', categoryId: f.categoryId || '', description: f.description || '',
+      name: f.name.trim(), imageId, imageUrl, categoryId: f.categoryId || '', description: f.description || '',
       prepTime: Number(f.prepTime) || 0, cookTime: Number(f.cookTime) || 0, servings: Number(f.servings) || 1,
       difficulty: f.difficulty || 'easy',
       ingredients: f.ingredients.filter(i => i.name && i.name.trim()),
@@ -782,6 +737,11 @@ async function saveRecipe(status) {
     };
     if (f.id) {
       await db.collection('recipes').doc(f.id).set(payload, { merge: true });
+      // Chỉ xoá ảnh cũ sau khi lưu thành công và không còn công thức nào khác dùng
+      if (oldImageId && !imageId && !State.recipes.some(x => x.id !== f.id && x.imageId === oldImageId)) {
+        db.collection('recipe_images').doc(oldImageId).delete().catch(() => { });
+      }
+      State.formState = null;
       toast('Đã cập nhật công thức');
       location.hash = '#/recipe/' + f.id;
     } else {
@@ -950,7 +910,6 @@ document.addEventListener('click', e => {
     'log-cook': () => openLogModal(id),
     'save-log': () => saveLog(id),
     'open-log': () => { location.hash = '#/log'; },
-    'pick-image': () => pickImage(),
     'add-ingredient': () => addIngredient(),
     'remove-ingredient': () => removeIngredient(Number(id)),
     'add-step': () => addStep(),
