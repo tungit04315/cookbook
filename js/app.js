@@ -194,7 +194,7 @@ window.addEventListener('hashchange', () => router());
 
 function router(silentIfSameRoute) {
   const { route, id } = parseHash();
-  qsa('.nav-item').forEach(a => a.classList.toggle('active', a.dataset.route === route));
+  qsa('.nav-item').forEach(a => a.classList.toggle('active', a.dataset.route === (route === 'spin' ? 'dashboard' : route)));
   byId('dashMascot').classList.toggle('hidden', route !== 'dashboard');
 
   const renderers = {
@@ -205,6 +205,7 @@ function router(silentIfSameRoute) {
     'recipe-form': () => renderRecipeForm(id),
     categories: renderCategories,
     settings: renderSettings,
+    spin: renderSpin,
     log: renderGlobalLog
   };
   (renderers[route] || renderDashboard)();
@@ -259,6 +260,8 @@ function renderDashboard() {
         <img src="img/IMG_3634-Photoroom.png" class="hero-chef" alt="Đầu bếp">
       </div>
     </div>
+
+    ${spinBannerHtml()}
 
     <div class="stats">
       <div class="stat-card c1" data-action="go" data-id="recipes"><span class="stat-icon">📕</span><div class="stat-label">Tổng công thức</div><div class="stat-value">${total}</div></div>
@@ -1068,6 +1071,8 @@ document.addEventListener('click', e => {
     'do-delete-category': () => doDeleteCategory(id),
     'save-category': () => saveCategory(id),
     'toggle-theme': () => toggleTheme(),
+    'spin-start': () => startSpin(),
+    'spin-view': () => viewSpinResult(id),
     'export-data': () => exportData(),
     'trigger-import': () => triggerImport(),
     'do-import': () => doImport(),

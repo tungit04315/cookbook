@@ -74,6 +74,7 @@ Muốn dùng lâu dài, có thể host tĩnh bằng bất kỳ dịch vụ nào 
 ## 5. Tính năng đã có
 
 - **Dashboard**: thống kê tổng công thức / mới / yêu thích / danh mục, công thức mới nhất, danh mục phổ biến.
+- **Vòng quay món ngon**: mở từ Trang chủ, chọn ngẫu nhiên 1 món trong toàn bộ công thức hợp lệ (có tên, không phải bản nháp). Món trùng tên (không phân biệt hoa/thường, khoảng trắng thừa, hậu tố "(bản sao)"; có phân biệt dấu) chỉ tính 1 lần. 6 ô trên vòng quay chỉ để minh hoạ.
 - **Công thức**: thêm / sửa / xoá / sao chép / đánh dấu yêu thích / lưu nháp, đầy đủ trường (ảnh, danh mục, mô tả, thời gian, khẩu phần, độ khó, nguyên liệu, các bước, mẹo, ghi chú, video).
 - **Ảnh món ăn**: dán link ảnh, có xem trước.
 - **Danh mục**: thêm / sửa / xoá, hiển thị số lượng món.
