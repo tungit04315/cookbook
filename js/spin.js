@@ -94,6 +94,7 @@ function renderSpin() {
     const lights = Array.from({ length: 18 }, (_, i) => `<i style="--a:${i * 20}deg; animation-delay:${(i % 2) * 0.6}s"></i>`).join('');
     byId('mainContent').innerHTML = `
       <div class="spin-page">
+        <button class="spin-mute" id="spinMute" data-action="spin-mute"></button>
         <div class="spin-gift">🎁</div>
         <h1 class="spin-title">Vòng quay <span>món ngon</span></h1>
         <p class="spin-desc">Quay ngay để khám phá món ăn ngẫu nhiên<br>từ bộ sưu tập công thức hấp dẫn!</p>
@@ -123,6 +124,20 @@ function renderSpin() {
   if (stale) Spin.slots = spinBuildSlots(pool);
   spinDrawWheel();
   spinUpdateControls(pool.length);
+  spinUpdateMute();
+}
+
+function spinUpdateMute() {
+  const btn = byId('spinMute');
+  const muted = SpinSound.isMuted();
+  btn.textContent = muted ? '🔇' : '🔊';
+  btn.setAttribute('aria-label', muted ? 'Bật âm thanh' : 'Tắt âm thanh');
+  btn.title = btn.getAttribute('aria-label');
+}
+
+function toggleSpinSound() {
+  SpinSound.toggleMute();
+  spinUpdateMute();
 }
 
 function spinDrawWheel() {
@@ -190,6 +205,11 @@ function startSpin() {
   });
   Spin.rotation = next;
 
+  if (SpinSound.unlock()) {
+    SpinSound.start();
+    SpinSound.follow(wheel, slotAngle);
+  }
+
   // 4) Dừng xong thì công bố kết quả
   Spin.timer = setTimeout(() => finishSpin(winner.id), duration + 250);
 }
@@ -199,8 +219,9 @@ function finishSpin(winnerId) {
   Spin.timer = null;
   const winner = recipeById(winnerId);
   const total = spinEligibleRecipes(State.recipes).length;
-  if (!winner) { toast('Món vừa chọn đã bị xoá, hãy quay lại nhé'); renderSpin(); return; }
+  if (!winner) { SpinSound.stop(); toast('Món vừa chọn đã bị xoá, hãy quay lại nhé'); renderSpin(); return; }
   spinUpdateControls(total);
+  SpinSound.win();
   openModal(`
     <div class="spin-result">
       <div class="spin-ribbon">🎉 Chúc mừng bạn!</div>
@@ -229,5 +250,6 @@ window.addEventListener('hashchange', () => {
   clearTimeout(Spin.timer);
   Spin.timer = null;
   Spin.spinning = false;
+  SpinSound.stop();
   if (qs('.spin-result')) closeModal();
 });

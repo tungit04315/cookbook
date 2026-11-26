@@ -1072,6 +1072,7 @@ document.addEventListener('click', e => {
     'save-category': () => saveCategory(id),
     'toggle-theme': () => toggleTheme(),
     'spin-start': () => startSpin(),
+    'spin-mute': () => toggleSpinSound(),
     'spin-view': () => viewSpinResult(id),
     'export-data': () => exportData(),
     'trigger-import': () => triggerImport(),
