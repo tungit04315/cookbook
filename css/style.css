@@ -844,18 +844,18 @@ header#appHeader {
   color: #fff;
 }
 
-.image-upload {
+.image-preview {
   width: 100%;
   height: 170px;
+  margin-bottom: 8px;
   border-radius: 18px;
   border: 2px dashed var(--border);
   background: var(--white);
   display: flex;
   align-items: center;
   justify-content: center;
-  flex-direction: column;
-  gap: 8px;
-  cursor: pointer;
+  padding: 0 16px;
+  text-align: center;
   overflow: hidden;
   position: relative;
   color: var(--text-grey);
@@ -863,7 +863,7 @@ header#appHeader {
   font-size: 13px;
 }
 
-.image-upload img {
+.image-preview img {
   position: absolute;
   inset: 0;
   width: 100%;
