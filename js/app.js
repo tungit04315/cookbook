@@ -282,7 +282,9 @@ function renderDashboard() {
       
     </div>
   `;
-  byId('dashSearch').addEventListener('input', e => { State.filters.query = e.target.value; location.hash = '#/recipes'; });
+  byId('dashSearch').addEventListener('click', openSearch);
+  // Trường hợp chuyển tới ô này bằng phím Tab rồi gõ
+  byId('dashSearch').addEventListener('input', e => { State.filters.query = e.target.value; openSearch(); });
 }
 
 function cardHtml(r) {
@@ -328,24 +330,46 @@ function emptyStateHtml(kind) {
 /* ---------------------------- RECIPES LIST / FAVORITES ---------------------------- */
 function renderRecipesView(favOnly) {
   renderHeaderPage(favOnly ? 'Món yêu thích' : 'Tất cả công thức', 'dashboard');
-  const list = applyFilters(favOnly);
-  byId('mainContent').innerHTML = `
-    <div class="search-row">
-      <div class="search-box">🔍<input id="listSearch" value="${esc(State.filters.query)}" placeholder="Tìm kiếm món ăn, nguyên liệu..." /></div>
-      <button class="filter-btn" data-action="open-filter">⚙️ Bộ lọc</button>
-    </div>
-    <div class="chip-row">
-      <button class="chip ${State.filters.sort === 'newest' ? 'active' : ''}" data-action="set-sort" data-id="newest">Mới nhất</button>
-      <button class="chip ${State.filters.sort === 'name' ? 'active' : ''}" data-action="set-sort" data-id="name">Tên A-Z</button>
-      <button class="chip ${State.filters.favoriteOnly ? 'active' : ''}" data-action="toggle-fav-filter">❤️ Yêu thích</button>
-      ${State.categories.map(c => `<button class="chip ${State.filters.categoryId === c.id ? 'active' : ''}" data-action="filter-category" data-id="${c.id}">${esc(c.icon)} ${esc(c.name)}</button>`).join('')}
-    </div>
-    <div class="section" style="padding-top:4px;">
-      ${list.length ? `<div class="recipe-grid">${list.map(cardHtml).join('')}</div>` : emptyStateHtml(favOnly ? 'favorite' : 'recipe')}
-    </div>
-    <div class="fab-space"></div>
+  const view = favOnly ? 'favorites' : 'recipes';
+
+  // Khung trang (kèm ô tìm kiếm) chỉ tạo một lần. Vẽ lại ô input sẽ làm mất con trỏ và ngắt bộ gõ tiếng Việt
+  if (!qs(`#mainContent [data-view="${view}"]`)) {
+    byId('mainContent').innerHTML = `
+      <div data-view="${view}">
+        <div class="search-row">
+          <div class="search-box">🔍<input id="listSearch" placeholder="Tìm kiếm món ăn, nguyên liệu..." /></div>
+          <button class="filter-btn" data-action="open-filter">⚙️ Bộ lọc</button>
+        </div>
+        <div class="chip-row" id="listChips"></div>
+        <div class="section" id="listResults" style="padding-top:4px;"></div>
+        <div class="fab-space"></div>
+      </div>`;
+    byId('listSearch').value = State.filters.query;
+    byId('listSearch').addEventListener('input', e => { State.filters.query = e.target.value; renderRecipeResults(favOnly); });
+  }
+
+  byId('listChips').innerHTML = `
+    <button class="chip ${State.filters.sort === 'newest' ? 'active' : ''}" data-action="set-sort" data-id="newest">Mới nhất</button>
+    <button class="chip ${State.filters.sort === 'name' ? 'active' : ''}" data-action="set-sort" data-id="name">Tên A-Z</button>
+    <button class="chip ${State.filters.favoriteOnly ? 'active' : ''}" data-action="toggle-fav-filter">❤️ Yêu thích</button>
+    ${State.categories.map(c => `<button class="chip ${State.filters.categoryId === c.id ? 'active' : ''}" data-action="filter-category" data-id="${c.id}">${esc(c.icon)} ${esc(c.name)}</button>`).join('')}
   `;
-  byId('listSearch').addEventListener('input', e => { State.filters.query = e.target.value; renderRecipesView(favOnly); });
+  renderRecipeResults(favOnly);
+}
+
+function renderRecipeResults(favOnly) {
+  const list = applyFilters(favOnly);
+  byId('listResults').innerHTML = list.length ? `<div class="recipe-grid">${list.map(cardHtml).join('')}</div>` : emptyStateHtml(favOnly ? 'favorite' : 'recipe');
+}
+
+// Bấm vào ô tìm kiếm ở Trang chủ -> mở danh sách và đặt con trỏ ngay, trước khi gõ.
+// Làm đồng bộ trong sự kiện click để bàn phím trên điện thoại vẫn bật lên.
+function openSearch() {
+  history.pushState(null, '', '#/recipes');
+  router();
+  const input = byId('listSearch');
+  input.focus();
+  input.setSelectionRange(input.value.length, input.value.length);
 }
 
 function applyFilters(favOnly) {
