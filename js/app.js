@@ -852,36 +852,158 @@ async function saveSettingsFromUI() {
     toast('Đã lưu cài đặt');
   } catch (e) { toast('Lỗi: ' + e.message); } finally { hideLoading(); }
 }
+/* ---------------------------- XUẤT / NHẬP DỮ LIỆU ---------------------------- */
 function exportData() {
-  const data = { recipes: State.recipes, categories: State.categories, logs: State.logs, settings: State.settings, exportedAt: new Date().toISOString() };
+  // Kèm các ảnh base64 mà công thức đang dùng (ảnh dạng link đã nằm trong imageUrl)
+  const images = {};
+  let missing = 0;
+  State.recipes.forEach(r => {
+    if (!r.imageId) return;
+    if (State.images[r.imageId]) images[r.imageId] = State.images[r.imageId];
+    else missing++;
+  });
+  const data = { version: 2, recipes: State.recipes, categories: State.categories, logs: State.logs, settings: State.settings, images, exportedAt: new Date().toISOString() };
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
   a.download = `yummy-recipes-backup-${Date.now()}.json`;
   a.click();
-  toast('Đã xuất file JSON');
+  toast(missing ? `Đã xuất file, nhưng thiếu ảnh của ${missing} công thức` : 'Đã xuất file JSON');
 }
 function triggerImport() { byId('importFileInput').click(); }
+
+const isDocId = id => typeof id === 'string' && /^[A-Za-z0-9_-]+$/.test(id);
+const toText = v => (typeof v === 'string' || typeof v === 'number') ? String(v) : '';
+const toNumber = (v, fallback = 0) => (Number.isFinite(Number(v)) && Number(v) >= 0) ? Number(v) : fallback;
+const toRefId = v => isDocId(v) ? v : '';
+// Timestamp khi ghi ra JSON có dạng { seconds, nanoseconds } -> đổi lại để giữ đúng thứ tự thời gian
+function toTimestamp(v) {
+  if (v && Number.isFinite(v.seconds)) return new firebase.firestore.Timestamp(v.seconds, v.nanoseconds || 0);
+  return firebase.firestore.FieldValue.serverTimestamp();
+}
+
+// Cho phép link http(s) và link tương đối, chặn javascript:, data:...
+function isSafeLink(url) {
+  try { return ['http:', 'https:'].includes(new URL(url, location.href).protocol); }
+  catch (e) { return false; }
+}
+
+// Kiểm tra toàn bộ file TRƯỚC khi ghi, trả về danh sách thao tác ghi (giữ nguyên ID)
+function parseBackup(data) {
+  if (!data || !Array.isArray(data.recipes) || !Array.isArray(data.categories)) throw new Error('Không đúng định dạng file sao lưu');
+  const list = (value, label) => {
+    if (value === undefined) return [];
+    if (!Array.isArray(value)) throw new Error(`Mục ${label} không hợp lệ`);
+    value.forEach(x => { if (!x || !isDocId(x.id)) throw new Error(`Mục ${label} có bản ghi thiếu hoặc sai ID`); });
+    return value;
+  };
+
+  const images = Object.entries(data.images || {}).map(([id, src]) => {
+    if (!isDocId(id) || typeof src !== 'string' || !src.startsWith('data:image/') || src.length > 900000) throw new Error('File có ảnh không hợp lệ');
+    return { col: 'recipe_images', id, data: { data: src, createdAt: firebase.firestore.FieldValue.serverTimestamp() } };
+  });
+
+  const categories = list(data.categories, 'danh mục').map(c => {
+    if (!toText(c.name)) throw new Error('Có danh mục thiếu tên');
+    return { col: 'categories', id: c.id, data: { name: toText(c.name), icon: toText(c.icon) || '🍽️', createdAt: toTimestamp(c.createdAt) } };
+  });
+
+  const recipes = list(data.recipes, 'công thức').map(r => {
+    if (!toText(r.name)) throw new Error('Có công thức thiếu tên');
+    const imageUrl = toText(r.imageUrl);
+    const videoLink = toText(r.videoLink);
+    return {
+      col: 'recipes', id: r.id, data: {
+        name: toText(r.name), imageId: toRefId(r.imageId), imageUrl: isImageLink(imageUrl) ? imageUrl : '',
+        categoryId: toRefId(r.categoryId), description: toText(r.description),
+        prepTime: toNumber(r.prepTime), cookTime: toNumber(r.cookTime), servings: toNumber(r.servings, 1),
+        difficulty: ['easy', 'medium', 'hard'].includes(r.difficulty) ? r.difficulty : 'easy',
+        ingredients: (Array.isArray(r.ingredients) ? r.ingredients : []).map(i => ({ name: toText(i?.name), amount: toText(i?.amount), unit: toText(i?.unit) })),
+        steps: (Array.isArray(r.steps) ? r.steps : []).map((s, i) => ({ order: i + 1, content: toText(s?.content ?? s) })),
+        tips: toText(r.tips), notes: toText(r.notes),
+        videoLink: isSafeLink(videoLink) ? videoLink : '',
+        status: r.status === 'draft' ? 'draft' : 'saved', isFavorite: r.isFavorite === true, cookCount: toNumber(r.cookCount),
+        createdAt: toTimestamp(r.createdAt), updatedAt: toTimestamp(r.updatedAt)
+      }
+    };
+  });
+
+  const logs = list(data.logs, 'nhật ký').map(l => ({
+    col: 'cooking_logs', id: l.id,
+    data: { recipeId: toRefId(l.recipeId), date: toText(l.date), rating: Math.min(5, Math.floor(toNumber(l.rating))), note: toText(l.note), createdAt: toTimestamp(l.createdAt) }
+  }));
+
+  const s = data.settings;
+  const settings = s ? [{
+    col: 'app_settings', id: SETTINGS_DOC_ID,
+    data: { appName: toText(s.appName) || 'Yummy Recipes', logoEmoji: toText(s.logoEmoji) || '👩‍🍳', theme: s.theme === 'dark' ? 'dark' : 'light' }
+  }] : [];
+
+  // Công thức dùng ảnh đã lưu nhưng cả file lẫn database đều không có ảnh đó
+  const missingImages = recipes.filter(r => r.data.imageId && !data.images?.[r.data.imageId] && !State.images[r.data.imageId]).length;
+
+  // Ghi ảnh và danh mục trước để công thức luôn có dữ liệu để trỏ tới
+  return {
+    writes: [...images, ...categories, ...recipes, ...logs, ...settings],
+    counts: { recipes: recipes.length, categories: categories.length, logs: logs.length, images: images.length },
+    missingImages
+  };
+}
+
+// Firestore giới hạn số thao tác và dung lượng mỗi lần ghi -> chia thành nhiều batch
+function chunkWrites(writes, maxOps = 400, maxBytes = 4 * 1024 * 1024) {
+  const chunks = [];
+  let chunk = [], bytes = 0;
+  writes.forEach(w => {
+    const size = new Blob([JSON.stringify(w.data)]).size;
+    if (chunk.length && (chunk.length >= maxOps || bytes + size > maxBytes)) { chunks.push(chunk); chunk = []; bytes = 0; }
+    chunk.push(w); bytes += size;
+  });
+  if (chunk.length) chunks.push(chunk);
+  return chunks;
+}
+
 async function onImportFile(e) {
-  const file = e.target.files[0];
+  const input = e.target;
+  const file = input.files[0];
   if (!file) return;
   try {
-    const text = await file.text();
-    const data = JSON.parse(text);
+    const backup = parseBackup(JSON.parse(await file.text()));
+    State.pendingImport = backup;
+    const c = backup.counts;
+    openModal(`
+      <h3>Nhập dữ liệu?</h3>
+      <p style="font-size:13.5px; color:var(--text-grey); margin-bottom:12px;">File có ${c.recipes} công thức, ${c.categories} danh mục, ${c.logs} nhật ký, ${c.images} ảnh đã lưu.</p>
+      <p style="font-size:13.5px; color:var(--text-grey); margin-bottom:12px;">Bản ghi trùng ID và cài đặt sẽ bị <b>ghi đè theo file</b>. Dữ liệu khác được giữ nguyên.</p>
+      ${backup.missingImages ? `<p style="font-size:13.5px; margin-bottom:12px;">⚠️ ${backup.missingImages} công thức bị thiếu ảnh đã lưu.</p>` : ''}
+      <div class="btn-row" style="padding:0;">
+        <button class="btn-outline" data-action="close-modal">Huỷ</button>
+        <button class="btn-primary" data-action="do-import">Nhập</button>
+      </div>
+    `);
+  } catch (err) { toast('File không hợp lệ: ' + err.message); }
+  finally { input.value = ''; }
+}
+
+async function doImport() {
+  const backup = State.pendingImport;
+  if (!backup) return;
+  State.pendingImport = null;
+  closeModal();
+  let done = 0;
+  try {
     showLoading();
-    const batch = db.batch();
-    (data.categories || []).forEach(c => {
-      const ref = db.collection('categories').doc();
-      batch.set(ref, { name: c.name, icon: c.icon || '🍽️', createdAt: firebase.firestore.FieldValue.serverTimestamp() });
-    });
-    (data.recipes || []).forEach(r => {
-      const ref = db.collection('recipes').doc();
-      const clean = { ...r }; delete clean.id;
-      batch.set(ref, { ...clean, createdAt: firebase.firestore.FieldValue.serverTimestamp(), updatedAt: firebase.firestore.FieldValue.serverTimestamp() });
-    });
-    await batch.commit();
+    for (const chunk of chunkWrites(backup.writes)) {
+      const batch = db.batch();
+      chunk.forEach(w => batch.set(db.collection(w.col).doc(w.id), w.data));
+      await batch.commit();
+      done += chunk.length;
+    }
     toast('Đã nhập dữ liệu thành công');
-  } catch (err) { toast('File không hợp lệ: ' + err.message); } finally { hideLoading(); }
+  } catch (err) {
+    console.error(err);
+    toast(`Mới nhập được ${done}/${backup.writes.length} bản ghi. Hãy nhập lại file. Lỗi: ${err.message}`);
+  } finally { hideLoading(); }
 }
 
 /* ---------------------------- EVENT DELEGATION ---------------------------- */
@@ -924,6 +1046,7 @@ document.addEventListener('click', e => {
     'toggle-theme': () => toggleTheme(),
     'export-data': () => exportData(),
     'trigger-import': () => triggerImport(),
+    'do-import': () => doImport(),
     'save-settings': () => saveSettingsFromUI()
   };
   if (map[action]) map[action]();
